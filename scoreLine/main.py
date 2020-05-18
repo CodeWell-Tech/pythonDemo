@@ -12,7 +12,7 @@ GprovinceID = {'北京': 11, '天津': 12, '河北': 13, '山西': 14, '内蒙�
 
 GtypeID = {'理科': 1, '文科': 2}
 
-schoolName = '武汉大学'
+schoolName = '华中科技大学'
 provinceName = '湖北'
 typeName = '理科'
 
@@ -31,6 +31,13 @@ def initDB():
     c.execute('''CREATE TABLE IF NOT EXISTS PROVINCELINE
         (ID INTEGER PRIMARY KEY autoincrement,
         NAME        TEXT    NOT NULL,
+        TYPE        INT     NOT NULL,
+        DATA        TEXT    NOT NULL
+        );''')
+    c.execute('''CREATE TABLE IF NOT EXISTS SCHOOLLINE
+        (ID INTEGER PRIMARY KEY autoincrement,
+        NAME        TEXT    NOT NULL,
+        PROVINCE    TEXT    NOT NULL,
         TYPE        INT     NOT NULL,
         DATA        TEXT    NOT NULL
         );''')
@@ -66,6 +73,22 @@ def searchProvinceLine(provinceName, stype):
     c = conn.cursor()
     cursor = c.execute(
         "SELECT data from PROVINCELINE where name='%s' AND type='%s'" % (provinceName, stype))
+    result = cursor.fetchall()
+    if len(result) == 0:
+        conn.close()
+        return ""
+    conn.close()
+    return json.loads(result[0][0])
+
+
+def searchSchoolScoreLine(schoolName, provinceName, stype):
+    '''
+    学校名称，省份名称，科目名称
+    '''
+    conn = sqlite3.connect('score.db')
+    c = conn.cursor()
+    cursor = c.execute(
+        "SELECT data from SCHOOLLINE where name='%s' AND type='%s' AND province='%s'" % (schoolName, stype, provinceName))
     result = cursor.fetchall()
     if len(result) == 0:
         conn.close()
@@ -127,19 +150,32 @@ def requestProvinceScoreLine(provinceName, stype):
         for i in range(info['data']['numFound']):
             if info['data']['item'][i]['local_type_name'] == '理科':
                 if info['data']['item'][i]['local_batch_name'] == '本科一批' or info['data']['item'][i]['local_batch_name'] == '本科批':
-                    liA.append(info['data']['item'][i]['average'])
+                    temp = {'year': info['data']['item'][i]['year'],
+                            'score': info['data']['item'][i]['average']}
+                    liA.append(temp)
                 elif info['data']['item'][i]['local_batch_name'] == '本科二批':
-                    liB.append(info['data']['item'][i]['average'])
-            if info['data']['item'][i]['local_type_name'] == '文科':
+                    temp = {'year': info['data']['item'][i]['year'],
+                            'score': info['data']['item'][i]['average']}
+                    liB.append(temp)
+                    break
+            elif info['data']['item'][i]['local_type_name'] == '文科':
                 if info['data']['item'][i]['local_batch_name'] == '本科一批' or info['data']['item'][i]['local_batch_name'] == '本科批':
-                    wenA.append(info['data']['item'][i]['average'])
+                    temp = {'year': info['data']['item'][i]['year'],
+                            'score': info['data']['item'][i]['average']}
+                    wenA.append(temp)
                 elif info['data']['item'][i]['local_batch_name'] == '本科二批':
-                    wenB.append(info['data']['item'][i]['average'])
-            # else:
-            #     liA.append(info['data']['item'][i]['average'])
-            #     liB.append(info['data']['item'][i]['average'])
-            #     wenA.append(info['data']['item'][i]['average'])
-            #     wenB.append(info['data']['item'][i]['average'])
+                    temp = {'year': info['data']['item'][i]['year'],
+                            'score': info['data']['item'][i]['average']}
+                    wenB.append(temp)
+                    break
+            elif info['data']['item'][i]['local_type_name'] == '综合':
+                temp = {'year': info['data']['item'][i]['year'],
+                        'score': info['data']['item'][i]['average']}
+                liA.append(temp)
+                liB.append(temp)
+                wenA.append(temp)
+                wenB.append(temp)
+                break
     # insert db
     # print(liA, liB, wenA, wenB)
     liAjson = {"type": "本科一批", "data": liA}
@@ -164,6 +200,55 @@ def requestProvinceScoreLine(provinceName, stype):
     return result
 
 
+def requestSchoolLine(schoolid, schoolName, provinceName, stype):
+    '''
+    request school score LINE.
+    from 2017-2019.
+    '''
+    url = 'https://static-data.eol.cn/www/2.0/school/%d/info.json' % (schoolid)
+    headers = headers = {'Accept': 'text/plain, application/json, */*',
+                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.122 Safari/537.36'}
+    result = requests.get(url, headers=headers)
+    info = json.loads(result.text)
+    if info['code'] != "0000":
+        print('request school line Error')
+        return ""
+    provinceid = GprovinceID[provinceName]
+    scoreLine = info['data']['pro_type_min'][str(provinceid)]
+    li = []
+    wen = []
+    conn = sqlite3.connect('score.db')
+    c = conn.cursor()
+    for i in range(len(scoreLine)):
+        if '1' in scoreLine[i]['type']:
+            temp = {'year': scoreLine[i]['year']}
+            temp['score'] = float(scoreLine[i]['type']['1'])
+            li.append(temp)
+        if '2' in scoreLine[i]['type']:
+            temp = {'year': scoreLine[i]['year']}
+            temp['score'] = float(scoreLine[i]['type']['2'])
+            wen.append(temp)
+        if '3' in scoreLine[i]['type']:
+            temp = {'year': scoreLine[i]['year']}
+            temp['score'] = float(scoreLine[i]['type']['3'])
+            li.append(temp)
+            wen.append(temp)
+    lijson = {"type": "理科", "data": li}
+    wenjson = {"type": "文科", "data": wen}
+    c.execute(
+        "INSERT INTO SCHOOLLINE (NAME, PROVINCE, TYPE, DATA) \
+        VALUES ('%s', '%s', %d, '%s')" % (provinceName, provinceName, 1, json.dumps(lijson)))
+    c.execute(
+        "INSERT INTO SCHOOLLINE (NAME, PROVINCE, TYPE, DATA) \
+        VALUES ('%s', '%s', %d, '%s')" % (provinceName, provinceName, 2, json.dumps(wenjson)))
+    conn.commit()
+    conn.close()
+    if stype == "理科":
+        return lijson
+    else:
+        return wenjson
+
+
 def drawProvinceData(scoreList, provinceName, stype):
     '''
     draw province Score Line.\r\n
@@ -171,12 +256,20 @@ def drawProvinceData(scoreList, provinceName, stype):
     only draw '文科' and '理科'.\r\n
     from 2014-2019.
     '''
-
-    x1 = [1, 2, 3, 4, 5, 6]
-    y1 = scoreList['data'][0]['data']
-
-    x2 = [1, 2, 3, 4, 5, 6]
-    y2 = scoreList['data'][1]['data']
+    x1 = []
+    y1 = []
+    x2 = []
+    y2 = []
+    for i in range(len(scoreList['data'][0]['data'])):
+        x = scoreList['data'][0]['data'][i]['year']-2013
+        y = scoreList['data'][0]['data'][i]['score']
+        x1.append(x)
+        y1.append(y)
+    for i in range(len(scoreList['data'][1]['data'])):
+        x = scoreList['data'][1]['data'][i]['year']-2013
+        y = scoreList['data'][1]['data'][i]['score']
+        x2.append(x)
+        y2.append(y)
 
     group_labels = ['2014', '2015', '2016', '2017', '2018', '2019']
     plt.title('2014-2019年%s分数线(%s)' % (provinceName, stype))
@@ -187,7 +280,50 @@ def drawProvinceData(scoreList, provinceName, stype):
     plt.plot(x2, y2, 'b', label='本科二批')
     plt.xticks(x1, group_labels, rotation=0)
     plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
-    plt.legend(bbox_to_anchor=[0.3, 1])
+    plt.legend(bbox_to_anchor=[1, 1])
+    plt.grid()
+    plt.show()
+
+
+def drawSchoolLine(provinceLine, schoolLine, schoolName, provinceName, stype):
+    '''
+    draw school/province Score Line.\r\n
+    only draw '本科'.\r\n
+    only draw '文科' and '理科'.\r\n
+    '''
+    x1 = []
+    y1 = []
+    x2 = []
+    y2 = []
+    x3 = []
+    y3 = []
+    for i in range(len(provinceLine['data'][0]['data'])):
+        x = provinceLine['data'][0]['data'][i]['year']-2013
+        y = provinceLine['data'][0]['data'][i]['score']
+        x1.append(x)
+        y1.append(y)
+    for i in range(len(provinceLine['data'][1]['data'])):
+        x = provinceLine['data'][1]['data'][i]['year']-2013
+        y = provinceLine['data'][1]['data'][i]['score']
+        x2.append(x)
+        y2.append(y)
+    for i in range(len(schoolLine['data'])):
+        x = schoolLine['data'][i]['year']-2013
+        y = schoolLine['data'][i]['score']
+        x3.append(x)
+        y3.append(y)
+
+    group_labels = ['2014', '2015', '2016', '2017', '2018', '2019']
+    plt.title('历年%s分数线(%s)-%s最低录取分数线' % (provinceName, stype, schoolName))
+    plt.xlabel('年度')
+    plt.ylabel('分数')
+
+    plt.plot(x1, y1, 'r', label='本科一批')
+    plt.plot(x2, y2, 'b', label='本科二批')
+    plt.plot(x3, y3, 'g', label='%s最低录取分数线' % (schoolName))
+    plt.xticks(x1, group_labels, rotation=0)
+    plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
+    plt.legend(bbox_to_anchor=[1, 1])
     plt.grid()
     plt.show()
 
@@ -195,7 +331,7 @@ def drawProvinceData(scoreList, provinceName, stype):
 def main():
     print('Demo of scoreLine')
     initDB()
-    # hanlde school id
+    # handle school id
     schoolid = searchSchoolID(schoolName)
     if schoolid == -1:
         print('db search SCHOOLID not found')
@@ -220,7 +356,20 @@ def main():
         print('db search PROVINCE not found')
         provinceScoreLine = requestProvinceScoreLine(provinceName, typeName)
     print(provinceScoreLine)
-    drawProvinceData(provinceScoreLine, provinceName, typeName)
+    # drawProvinceData(provinceScoreLine, provinceName, typeName)
+
+    # handle school line
+    schoolLine = searchSchoolScoreLine(schoolName, provinceName, typeName)
+    if schoolLine == "":
+        print('db search SCHOOLLINE not found')
+        schoolLine = requestSchoolLine(
+            schoolid, schoolName, provinceName, typeName)
+        if schoolLine == "":
+            print('request Error')
+            return
+    print(schoolLine)
+    drawSchoolLine(provinceScoreLine, schoolLine,
+                   schoolName, provinceName, typeName)
 
 
 if __name__ == '__main__':
