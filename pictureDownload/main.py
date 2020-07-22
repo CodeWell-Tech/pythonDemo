@@ -3,7 +3,7 @@ import requests
 import progressbar
 
 
-def dowmloadPic(html, keyword, bar):
+def downloadPic(html, keyword, bar):
 
     urlList = re.findall('"objURL":"(.*?)",', html, re.S)
     print('start downloading\r\n')
@@ -32,6 +32,6 @@ if __name__ == '__main__':
     url = 'http://image.baidu.com/search/flip?tn=baiduimage&pn=0&word=%s&z=%d' % (
         word, quality)
     result = requests.get(url)
-    dowmloadPic(result.text, word, bar)
+    downloadPic(result.text, word, bar)
     bar.finish()
     print('download finished.')
